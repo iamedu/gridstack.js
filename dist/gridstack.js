@@ -582,7 +582,11 @@
             var o = $(this);
             self.grid.clean_nodes();
             self.grid.begin_update(node);
-            cell_width = Math.ceil(o.outerWidth() / o.attr('data-gs-width'));
+            if(self.opts.cell_width) {
+              cell_width = self.opts.cell_width;
+            } else {
+              cell_width = Math.ceil(o.outerWidth() / o.attr('data-gs-width'));
+            }
             cell_height = self.opts.cell_height + self.opts.vertical_margin;
             self.placeholder
                 .attr('data-gs-x', o.attr('data-gs-x'))
