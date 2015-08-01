@@ -39,7 +39,9 @@
             document.getElementsByTagName('head')[0].appendChild(style);
             return style.sheet;
         },
-
+        remove_stylesheet: function(id) {
+            $("STYLE[data-gs-id=" + id +"]").remove();
+        },
         insert_css_rule: function(sheet, selector, rules, index) {
             if (typeof sheet.insertRule === 'function') {
                 sheet.insertRule(selector + '{' + rules + '}', index);
@@ -397,6 +399,7 @@
             auto: true,
             min_width: 768,
             float: false,
+            static_grid: false,
             _class: 'grid-stack-' + (Math.random() * 10000).toFixed(0),
             animate: Boolean(this.container.attr('data-gs-animate')) || false,
             always_show_resize_handle: opts.always_show_resize_handle || false,
@@ -413,6 +416,9 @@
         this.opts.is_nested = is_nested;
 
         this.container.addClass(this.opts._class);
+
+        this._set_static_class();
+
         if (is_nested) {
             this.container.addClass('grid-stack-nested');
         }
@@ -462,7 +468,7 @@
             this.grid.get_grid_height() * (this.opts.cell_height + this.opts.vertical_margin) -
             this.opts.vertical_margin);
 
-        var on_resize_handler = function() {
+        this.on_resize_handler = function() {
             if (self._is_one_column_mode()) {
                 if (one_column_mode)
                     return;
@@ -473,6 +479,9 @@
                 _.each(self.grid.nodes, function(node) {
                     self.container.append(node.el);
 
+                    if (self.opts.static_grid) {
+                        return;
+                    }
                     if (!node.no_move) {
                         node.el.draggable('disable');
                     }
@@ -487,6 +496,10 @@
 
                 one_column_mode = false;
 
+                if (self.opts.static_grid) {
+                    return;
+                }
+
                 _.each(self.grid.nodes, function(node) {
                     if (!node.no_move) {
                         node.el.draggable('enable');
@@ -498,8 +511,23 @@
             }
         };
 
-        $(window).resize(on_resize_handler);
-        on_resize_handler();
+        $(window).resize(this.on_resize_handler);
+        this.on_resize_handler();
+    };
+    
+    GridStack.prototype._trigger_change_event = function(forceTrigger) {
+        var elements = this.grid.get_dirty_nodes();
+        var hasChanges = false;
+
+        var eventParams = [];
+        if (elements && elements.length) {
+            eventParams.push(elements);
+            hasChanges = true;
+        }
+
+        if (hasChanges || forceTrigger === true) {
+            this.container.trigger('change', eventParams);
+        }
     };
 
     GridStack.prototype._init_styles = function() {
@@ -593,6 +621,10 @@
         });
         el.data('_gridstack_node', node);
 
+        if (self.opts.static_grid) {
+            return;
+        }
+
         var cell_width, cell_height;
 
         var on_start_moving = function(event, ui) {
@@ -630,9 +662,7 @@
                 .attr('data-gs-height', node.height)
                 .removeAttr('style');
             self._update_container_height();
-            var elements = self.grid.get_dirty_nodes();
-            if (elements && elements.length)
-                self.container.trigger('change', [elements]);
+            self._trigger_change_event();
 
             self.grid.end_update();
         };
@@ -696,6 +726,7 @@
         this.container.append(el);
         this._prepare_element(el);
         this._update_container_height();
+        this._trigger_change_event(true);
 
         return el;
     };
@@ -714,6 +745,7 @@
         this._update_container_height();
         if (detach_node)
             el.remove();
+        this._trigger_change_event(true);
     };
 
     GridStack.prototype.remove_all = function(detach_node) {
@@ -722,6 +754,15 @@
         }, this);
         this.grid.nodes = [];
         this._update_container_height();
+    };
+
+    GridStack.prototype.destroy = function() {
+        $(window).off("resize", this.on_resize_handler);
+        this.disable();
+        this.container.remove();
+        Utils.remove_stylesheet(this._styles_id);
+        if (this.grid)
+            this.grid = null; 
     };
 
     GridStack.prototype.resizable = function(el, val) {
@@ -789,6 +830,40 @@
         return this;
     };
 
+	GridStack.prototype.min_height = function (el, val) {
+		el = $(el);
+		el.each(function (index, el) {
+			el = $(el);
+			var node = el.data('_gridstack_node');
+			if (typeof node == 'undefined' || node == null) {
+				return;
+			}
+
+			if(!isNaN(val)){
+				node.min_height = (val || false);
+				el.attr('data-gs-min-height', val);
+			}
+		});
+		return this;
+	};
+
+	GridStack.prototype.min_width = function (el, val) {
+		el = $(el);
+		el.each(function (index, el) {
+			el = $(el);
+			var node = el.data('_gridstack_node');
+			if (typeof node == 'undefined' || node == null) {
+				return;
+			}
+
+			if(!isNaN(val)){
+				node.min_width = (val || false);
+				el.attr('data-gs-min-width', val);
+			}
+		});
+		return this;
+	};
+
     GridStack.prototype._update_element = function(el, callback) {
         el = $(el).first();
         var node = el.data('_gridstack_node');
@@ -804,9 +879,7 @@
         callback.call(this, el, node);
 
         self._update_container_height();
-        var elements = self.grid.get_dirty_nodes();
-        if (elements && elements.length)
-            self.container.trigger('change', [elements]);
+        self._trigger_change_event();
 
         self.grid.end_update();
     };
@@ -878,6 +951,21 @@
 
     GridStack.prototype.is_area_empty = function(x, y, width, height) {
         return this.grid.is_area_empty(x, y, width, height);
+    };
+
+    GridStack.prototype.set_static = function(static_value) {
+        this.opts.static_grid = (static_value === true);
+        this._set_static_class();
+    };
+
+    GridStack.prototype._set_static_class = function() {
+        var static_class_name = 'grid-stack-static';
+        
+        if (this.opts.static_grid === true) {
+            this.container.addClass(static_class_name);
+        } else {
+            this.container.removeClass(static_class_name);
+        }
     };
 
     scope.GridStackUI = GridStack;
